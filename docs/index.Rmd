@@ -1,0 +1,463 @@
+---
+title: "Topic Modeling"
+subtitle: Introduction to Text as Data
+author: "Amber Boydstun & Cory Struthers"
+date: "Fall 2025"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    code_folding: show
+    highlight: tango
+    theme: united
+    toc: yes
+    df_print: paged
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "~/Dropbox/text-as-data-JUST-CORY-AND-AMBER/modules_2024/data/")
+```
+
+### Introduction
+
+In this module, we will focus on implementing two types of Latent Dirichlet Allocation (LDA) topic models: unsupervised and supervised. LDA is a Bayesian hierarchical model, or a mixed-member model, where documents can (conveniently) contain more than one topic. 
+
+The LDA model is distinctly different than dictionary approaches for categorizing documents, in part because the LDA model is estimates relationships between similar words as opposed to using only the words the analyst provides.
+
+`quanteda` does not offer a function for LDA models but instead recommends the `seededlda` package. There are fewer post-estimation functions available in that package, so we'll also apply the LDA model using `topicmodels`, an alternative package with similar functionality.
+
+In this module, we'll need the following packages:
+
+```{r, results = 'hide', message = FALSE}
+
+# Load libraries
+require(stopwords)
+require(quanteda)
+require(quanteda.textmodels)
+require(quanteda.textplots)
+require(quanteda.textstats)
+require(topicmodels)
+require(seededlda)
+require(tidyverse)
+require(dplyr)
+require(ggplot2)
+require(tidyr)
+require(seededlda)
+
+#install.packages("reshape2")
+#install.packages("https://cran.r-project.org/src/contrib/Archive/reshape2/reshape2_1.4.4.tar.gz", repos = NULL, type = "source")
+#install.packages("gmp")
+#install.packages("Rmpfr")
+#install.packages("https://cran.r-project.org/src/contrib/Archive/ldatuning/ldatuning_1.0.2.tar.gz", repos = NULL, type = "source")
+
+library(ldatuning)
+options("scipen"=100, "digits"=4)
+
+# Set working directory
+setwd("~/Dropbox/text-as-data-JUST-CORY-AND-AMBER/modules_2024/data/")
+getwd() # view working directory
+
+```
+
+### Applying unsupervised LDA model
+
+We want to first flag that like other TAD methods, LDA is computationally intensive. 
+
+To reduce processing time for the purpose of this module, we will be using a small sample of legislative bills proposed by California state legislators in the 2019-2020 legislative session (130 texts). 
+
+Processing even a small number of texts may still be slow going. There are ways to handle computational intensive tasks, for instance by using the package `doParallel`, which utilizes multiple cores in your hard drive to handle tasks simultaneously. [Another less sophisticated recommendation as you're learning: Run code overnight.]
+
+As always, we will start by pre-processing the corpus, tokenizing, and creating a dfm. 
+
+```{r, message = FALSE} 
+
+# Load corpus
+bills_corp <- readRDS("ca_bills_corp_sample_2019-2020.RDS")
+
+# Create dfm
+bills_toks <- tokens(bills_corp, 
+                         remove_punct = TRUE, 
+                         remove_numbers = TRUE,
+                         remove_symbols = TRUE) %>%
+    tokens_remove(stopwords("en")) 
+
+# Collocations 
+bills_toks_coll <- textstat_collocations(bills_toks, size = 2:3, min_count = 30)
+head(bills_toks_coll, 20)
+
+# Add tokens objects together and create dfm
+bills_dfm <- tokens_compound(bills_toks, bills_toks_coll, concatenator = " ") %>%
+    tokens_wordstem  %>% 
+    dfm() %>%
+    dfm_trim(min_termfreq = 4, min_docfreq = 5) 
+bills_dfm
+
+# Explore your new matrix
+topfeatures(bills_dfm, 30) # top 30 features
+
+
+```
+
+We'll start with unsupervised approaches.
+
+Before running our model, we must define we must define the number of topics, $k$. The optimal value of $k$ depends on several considerations, all of which require human input. 
+
+When $k$ is too low, texts can be separated into just a few broad, substantively meaningless categories. When $k$ is too high, texts becomes divided into too many topics, some of which may conceptually overlap or be difficult to interpret. Too many categories also risks overfitting.
+
+For our initial analysis, we we'll start with a $k$ value of 20 topics based a rough definition of policy domains (say, for instance, based on the number of House committees in the US House of Representatives).
+
+```{r, message = FALSE}
+
+# Use topicmodel package
+bills_ldam <- LDA(bills_dfm, k=20, method="Gibbs", control=list(iter = 300, seed = 342, verbose = 25))
+
+```
+
+After running the model, we can print the top terms associated with each topic using `terms`.
+
+```{r, message = FALSE}
+
+# Show first 3 topics of first 10 texts
+topicmodels::topics(bills_ldam, 3)[,1:10] 
+
+# Show most frequently used terms in each topic
+topicmodels::terms(bills_ldam, 10)
+
+```
+
+
+### Validating unsupervised LDA model
+
+The next step is evaluating $k$. How do we know if we've assigned the "right" number of topics? 
+
+The good news is that there are several metrics to evaluate the answer to this question. The bad news is that no single metric is definitive, and there's no guarantee that all metrics will point the same direction -- thus, the importance of human judgement. 
+
+We'll present several metrics (not exhaustive list) in this module; please also note there are metrics to evaluate model fit that we do not focus on in this module. 
+
+#### Validation Metric: FindTopicsNumber
+
+The first metric we'll show you comes from the `ldatuning` package, which offers four distinct metrics for analyzing `k`. These metrics can be applied in a single function `FindTopicsNumber`. 
+
+The general intuition here is that each validation metric is applied over a sequence (specified in the `topics` option) of $k$ topics. In this case, we ask `ldatuning` to produce all four metrics over 10, 20, 30, 40... to 140 topics. After estimation, we can plot the output using the handy `FindTopicsNumber_plot` function that reminds that we want to minimize the value across two measures (CaoJuan2009, Arun2010) and maximize across the other two (Griffiths2004, Deveaud2014).
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+# Evaluate k
+numTopics <- ldatuning::FindTopicsNumber(bills_dfm, 
+                             topics = seq(10, 140, by = 10),
+                             metrics=c("Griffiths2004", "CaoJuan2009", "Arun2010","Deveaud2014"))
+
+# View individual metric across specified k
+numTopics$Arun2010
+
+# Plot topics across metrics
+ldatuning::FindTopicsNumber_plot(numTopics)
+
+
+```
+
+
+For LDA topic modeling, we want to select the $k$ at which point the value of the validation metrics are leveling off. Beyond that point, we risk overfitting the model. As expected, the metrics do not perfectly correspond. Arun2010 and CaoJuan2009 minimize and level around $k = 50$ whereas Griffiths2004 and Deveaud2014 maximize and level around $k = 30-40$. 
+
+#### Validation Metric: Perplexity
+
+Perplexity is a similar cross-validation approach: It reveals how well an LDA model performs on new data it has not encountered before. Low perplexity scores indicate that the model can explain unseen data well. 
+
+Cross-validation involving splitting the data into different groups, or "folds" (usually 5), training the model on 4/5 of the data and test the resulting model on 1/5 of the data that has been held out.
+
+To compare, we'll evaluate perplexity on the same values of $k$ we assigned when we applied metrics in the `ldatuning` package. 
+
+```{r message=FALSE, warning=FALSE}
+
+# Assign k topics
+k_topics_eval <-  c(10,20,30,40,50,60,70,80,90,100,110,120,130,140)
+
+# Create folding sets
+folding_sets <- rep(1:5, each = 26) # 130 bills / 5 sets (or folds)
+
+# Function that estimates perplexity across k and folding sets
+getPerplexity <- function(k, fold) {
+  
+    testing.dtm = which(folding_sets == fold) # 1/5 fold to hold out for testing
+    training.dtm = which(folding_sets != fold) # rest (4/5 folds) of the data used to train the model 
+    
+    training.model = LDA(bills_dfm[training.dtm, ], k = k) # train LDA model using 4/5 of data
+    test.model = LDA(bills_dfm[testing.dtm, ], model = training.model, control = list(estimate.beta = FALSE))
+    
+    topicmodels::perplexity(test.model) # calculate perplexity on the test model (1/5 of the data)
+}
+
+# Create results object
+perplexity_results <- NULL
+
+# Fill results object using function
+for (k in c(10,20,30,40,50,60,70,80,90,100,110,120,130,140)) {
+    for (fold in 1:5) {
+        perplexity_results = rbind(perplexity_results, 
+                                   c(k, fold, getPerplexity(k, fold)))
+    }
+}
+
+# Transform to df
+perplexity_results <- as.data.frame(perplexity_results)
+colnames(perplexity_results) <- c("k", "fold", "perplexity_value")
+perplexity_results
+
+```
+
+The dataframe includes three columns: one for topic $k$, one for the fold in which we tested our trained data, and finally a column for the perplexity value. 
+
+We can summarize the output in two ways. 
+
+First, we can average the perplexity estimate for each $k$ across all five folds and plot the trend line:
+
+```{r message=FALSE, warning=FALSE}
+
+# Round the folds 
+perplexity_sum <- perplexity_results %>%
+      group_by(k) %>%
+    summarise(average_perplexity = mean(perplexity_value))
+
+perplexity_sum
+
+# Plot perplexity across groups
+ggplot(perplexity_sum, aes(x=k, y=average_perplexity)) + 
+  geom_point() +
+  geom_line() +
+  theme_classic()
+
+```
+
+If we follow the principle of choosing the minimum value in which a leveling off occurs, the perplexity results suggest around 100 topics. We know this is likely a poor choice given our small sample of texts.
+
+Alternatively, we can plot each fold instead of collapsing them in order to see the extent each fold varies:
+
+```{r message=FALSE, warning=FALSE}
+
+# Plot folds across groups
+perplexity_results$fold <- as.character(perplexity_results$fold)
+ggplot(perplexity_results) + 
+  geom_line(aes(x=k, y=perplexity_value, group=fold, color=fold)) +
+  geom_point(aes(x=k, y=perplexity_value, group=fold, color=fold)) +
+  theme_classic() +
+  xlab("k (topics)") +
+  ylab("Perplexity") +
+  scale_color_manual(values = c('Red', 'Orange', 'Blue', 'Green', 'Purple')) 
+
+```
+
+At first glance, LDA models based on different folds appear to have varying trends. In particular, 2 and 5 have a much steeper downward pattern than the others. In folds 1, 3, and 4, leveling off may occur closer to 50 topics.
+
+Evaluating whether 30-50 topics best represent the topical distribution across our text requires human judgement. "Best practices" on topic models are loosely assembled, but we would implement something like the following in our own work (based on Grimmer et al., 2021 among others): 
+
+* Running the topic model at 20, 30, 40, and 50 topics and examining the topics for substantive meaning and coherence (step 1). 
+* Review associated terms and some texts, which may rule out a $k$ rather quickly. One helpful "shortcut" to begin human validation is taking several documents with the highest probability of a given topic and reading its text for meaning.
+* Once settled on a set of topics that seem to meet the criteria of substantive meaning and coherence, take a random sample of the text and using a clear procedure for closely reading and validating topics by hand across that sample (manual content analysis!)
+
+Let's reapply our LDA topic model, this time with 30 topics.
+
+```{r message=FALSE, warning=FALSE}
+
+# Apply model with 30 topics
+bills_ldam_30 <- LDA(bills_dfm, k=30, method="Gibbs", control=list(iter = 300, seed = 342, verbose = 25))
+
+# Show most frequently used terms in first 10 topics
+topicmodels::terms(bills_ldam_30, 10)[,1:10]
+
+```
+
+Do we think these topics look more substantively meaningful and coherent than 20 topics? 
+
+Below, we demonstrate how to select three documents with the highest proportion of each topic to begin reading and annotating. 
+
+```{r message=FALSE, warning=FALSE}
+
+# Estimate topic distribution for each bill
+topic_dist <- as.data.frame(posterior(bills_ldam_30)[2])
+topic_dist$doc_id <- row.names(topic_dist)
+head(topic_dist)
+
+# Transform to long
+topic_dist_long <- topic_dist %>%
+  pivot_longer(!doc_id, names_to = "topic", values_to = "Topic distribution")
+head(topic_dist_long)
+
+# Get highest value by topic
+highest_prob <- topic_dist_long %>%                                     
+  arrange(desc(`Topic distribution`)) %>% # arrange descending order
+  group_by(topic) %>%
+  slice(1:3) # take top 3
+highest_prob
+
+# Start reading/annotating
+as.character(bills_corp[23]) # 0.73 topic 2, then continue reading...
+
+```
+
+One of the greatest challenges in unsupervised topic modeling is discovering what these unnamed topics represent.
+
+### Starter material for distributions and visualization
+
+There are many creative ways to view the distribution of topics over texts once the model is adjusted and validated. 
+
+For instance, we can attach the most likely topics for each text (i.e., the topic with the greatest likelihood for that document), assign those to the corpus, and examine the distribution across covariates (doc vars).
+
+
+```{r, message = FALSE, fig.height = 10, fig.width = 12}
+
+# Most likely topics for each bill
+head(topicmodels::topics(bills_ldam_30), 20)
+
+# Assign most likely topic to docvars
+bills_corp$most_likely_topic <- topicmodels::topics(bills_ldam_30)
+
+# Topic count by party
+bills_docvars_df <- docvars(bills_corp)
+top_topic_party <- count(bills_docvars_df, party, most_likely_topic)
+
+# Plot
+ggplot(top_topic_party, aes(most_likely_topic, n)) +
+  geom_col(aes(fill=party)) +
+  theme_classic() +
+  ylab("Number of documents") +
+  xlab("Topic") +
+  ggtitle("Number of documents across most likely topic by party") + 
+  scale_fill_manual(values = c("blue", "red"))
+
+```
+
+These initial results suggest topic 12-14 are more frequently sponsored by Democratic members. Likewise, topic 17-18 tends to be authored by Republican members.
+
+\
+
+
+### Apply supervised (seeded) LDA
+
+Now, we will briefly a semi-supervised approach to topic modeling: "seeded LDA". 
+
+Seeded LDA "seeds" an LDA model with terms known to represent a topic, which the model uses to identify related words and phrases. Here, the analyst not assigns $k$ but also *defines* the content within $k$. 
+
+The LDA models learns which words are related to those seed words and uses that information to determine the proportion of topics within documents.
+
+Below, we use the dictionary terms from the Policy Agendas Project (PAP) dictionary to seed the LDA model on the same dfm object capturing California legislative bills. First we load the data:
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+# Get policy agendas dictionary
+load("policy_agendas_english.RData")
+head(dictLexic2Topics)[1:3]
+names(dictLexic2Topics)
+
+```
+
+We'll then take the first ten words in the dictionary to use as seeds. Seeding with too many terms may overfit the data.
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+# Take first ten features of policy agendas dictionary
+policy_seeds <- lapply(dictLexic2Topics,head,10)
+policy_seeds[1:2]
+names(policy_seeds)
+
+# Create dictionary to seed model
+policy_seeds_dict <- dictionary(policy_seeds)
+policy_seeds_dict 
+  # 24 topics
+
+```
+
+Now we apply the seeded LDA model using the `seededlda` package `quanteda` recommends.
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+# Apply *seeded* lda
+bills_lda_seed <- textmodel_seededlda(bills_dfm, dictionary = policy_seeds_dict, max_iter = 2000) 
+  # Note "residual topics" option
+  # Note need for multiple runs (separate from iterations)
+
+# View terms
+terms(bills_lda_seed, 10)[,1:10]
+
+```
+
+Well that didn't work very well, did it. Topics do not seem substantively meaningful or coherent.
+
+Any guesses why that topics are lacking coherence? 
+
+That's right! We took the first ten terms of the PAP dictionary, and dictionary terms are in alphabetical order!
+
+Let's now be more intentional about our construction of the seed terminology and evaluate whether this improves topical output.
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+# Select most prominent seed words associated with topic
+policy_seeds_dict_revised <- quanteda::dictionary(list(macroeconomics = c("fiscal", "taxes", "inflation", "microecon", "macroecon", "deficit"),
+                                            civil_rights = c("civil right", "civil libert", "diversity", "gay", "racism", "sexism"),
+                                            healthcare = c("health", "primary care", "prescription", "medicine", "physician"),       
+                                            agriculture = c("agricult", "pesticide", "tractor", "farm", "crop"),                
+                                            forestry = c("forest", "lumber", "timber", "tree", "deforest"),               
+                                            labour = c("hiring", "employ", "wage", "worker", "retirement", "unioniz"),               
+                                            immigration  = c("immigra", "border", "citizenship", "asylum", "deport"),             
+                                            education  = c("educat", "graduate", "student", "tuition"),                 
+                                            environment = c("environment", "climate change", "global warming", "greenhouse gas"),   
+                                            energy = c("electric", "energy", "oil produc", "natural gas", "renewable"),             
+                                            fisheries = c("fish", "crab", "mollusk", "aquaculture"),             
+                                            transportation = c("transport", "travel", "car", "road", "airline", "subway"),          
+                                            crime = c("crime", "felon", "incarcerat", "gun control", "indict", "criminal"),         
+                                            social_welfare = c("pension", "low-income", "poverty", "food bank"),       
+                                            housing = c("mortgage", "housing", "homeless", "real estate"),            
+                                            finance = c("banks", "copyright", "small business", "credit card"),                   
+                                            defence = c("army", "militar", "troop", "war", "weapon"),                 
+                                            sstc = c("scienc", "technolog", "telecom", "meterolog"),                     
+                                            foreign_trade = c("export", "free-trade", "wto", "tariff"),              
+                                            intl_affairs = c("diplomacy", "passport", "ambassador", "embass", "foreign aid"),       
+                                            government_ops = c("mail", "postal", "public sector", "civil service"),            
+                                            land_water_management = c("dams", "forest management", "mining", "water resource"),    
+                                            culture = c("art", "entertain", "theater"),          
+                                            prov_local = c("land use", "local government", "municipal", "zoning"),                
+                                            intergovernmental = c("intergovernment", "equalization"),        
+                                            # constitutional_natl_unity = c("constitution", "federalis"),  
+                                            aboriginal = c("amerindian", "native american", "first nation"),     
+                                            religion = c("christian", "catholic", "prayer", "god", "allah")))
+
+# Apply model
+bills_lda_seed_update <- seededlda::textmodel_seededlda(bills_dfm, dictionary = policy_seeds_dict_revised, max_iter = 2000) 
+
+# Get terms
+terms(bills_lda_seed_update, 15)[,1:10]
+
+```
+
+We have a ways to go, but an improvement on our first attempt. 
+
+How do we determine whether unsupervised or supervised LDA is the right application? Like always, it depends on the research question and data generation process (e.g., what you know and don't know about your data). 
+
+A next step in this particular analysis might be comparing topic distributions (topics and terms) across documents based on either LDA output and evaluating meaning and coherence.
+
+We should also note that because LDA models are Bayesian, results will change somewhat every time you run the model. Researchers often run them 5-10 times to evaluate how much results shift (e.g., to what degree the most likely topic estimate changes across documents)
+
+---
+
+### Homework
+
+#### Discussion Question: 
+1. Why might applying a topic model to the immigration tweet data we've been working with pose challenges?
+
+
+#### Project Questions (show your work):
+
+1. Load a corpus.
+
+2. Apply an LDA model with $k$ topics to your corpus. Assign $k$ based on your intuition and human judgement. 
+
+3. View the terms associated with each topic. Are those topics substantively meaningful and coherent? How might we interpret these results?
+
+4. Now, use the validation procedures to estimate $k$. How might we interpret these results?
+
+5. Repeat Steps 2-4 but this time using a different $k$. 
+
+6. Finally, discuss: what worked and what didn't, and why? Explain the similarities and differences between your two approaches and what you learned.
+
+Optional: Apply a seeded LDA model to your corpus using a dictionary.
+
