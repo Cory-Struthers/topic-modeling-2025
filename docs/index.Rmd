@@ -441,23 +441,18 @@ We should also note that because LDA models are Bayesian, results will change so
 
 ### Homework
 
-#### Discussion Question: 
-1. Why might applying a topic model to the immigration tweet data we've been working with pose challenges?
+#### Discussion Question
+
+1. Why might applying a topic model to the immigration tweet data we've been working with pose challenges for a topic model?
 
 
-#### Project Questions (show your work):
+#### Coding Questions
 
-1. Load a corpus.
+1. Load a sample of the news corpus ("news_corp_sample.rds").
+2. Apply an LDA model with $k$ topics to the news corpus. Assign $k$ based on your intuition and human judgement. View the terms associated with each topic. Are those topics substantively meaningful and coherent? 
+3. Now, use the validation procedures to estimate $k$.
+4. Finally, apply the seeded LDA model to the news data using the Policy Agendas Project dictionary.
 
-2. Apply an LDA model with $k$ topics to your corpus. Assign $k$ based on your intuition and human judgement. 
 
-3. View the terms associated with each topic. Are those topics substantively meaningful and coherent? How might we interpret these results?
 
-4. Now, use the validation procedures to estimate $k$. How might we interpret these results?
-
-5. Repeat Steps 2-4 but this time using a different $k$. 
-
-6. Finally, discuss: what worked and what didn't, and why? Explain the similarities and differences between your two approaches and what you learned.
-
-Optional: Apply a seeded LDA model to your corpus using a dictionary.
 
