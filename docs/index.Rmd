@@ -141,7 +141,7 @@ The first metric we'll show you comes from the `ldatuning` package, which offers
 
 The general intuition here is that each validation metric is applied over a sequence (specified in the `topics` option) of $k$ topics. In this case, we ask `ldatuning` to produce all four metrics over 10, 20, 30, 40... to 140 topics. After estimation, we can plot the output using the handy `FindTopicsNumber_plot` function that reminds that we want to minimize the value across two measures (CaoJuan2009, Arun2010) and maximize across the other two (Griffiths2004, Deveaud2014).
 
-```{r message=FALSE, warning=FALSE, results='hide'}
+```{r message=FALSE, warning=FALSE}
 
 # Evaluate k
 numTopics <- ldatuning::FindTopicsNumber(bills_dfm, 
