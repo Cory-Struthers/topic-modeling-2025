@@ -290,9 +290,6 @@ highest_prob <- topic_dist_long %>%
   slice(1:3) # take top 3
 highest_prob
 
-# Start reading/annotating
-as.character(bills_corp[23]) # 0.73 topic 2, then continue reading...
-
 ```
 
 One of the greatest challenges in unsupervised topic modeling is discovering what these unnamed topics represent.
